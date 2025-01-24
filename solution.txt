@@ -1,0 +1,228 @@
+FOr questions, refer to the code.txt in this repository, this txt file has the solution I did for my challenge....
+
+-----------------------task1:------------------------------------------
+
+Gonna create my service accunt
+
+my_temp_google_email@cloudshell:~ (qwiklabs-xxx-xy-xxxxxxxxxxx)$ gcloud iam service-accounts create my-account \
+    --description="Service account for Vision, Translate, BigQuery, and Storage" \
+    --display-name="My Service Account"
+Created service account [my-account].
+
+my_temp_google_email@cloudshell:~ (qwiklabs-xxx-xy-xxxxxxxxxxx)$ export PROJECT_ID=qwiklabs-xxx-xy-xxxxxxxxxxx
+
+my_temp_google_email@cloudshell:~ (qwiklabs-xxx-xy-xxxxxxxxxxx)$ export PROJECT=qwiklabs-xxx-xy-xxxxxxxxxxx
+
+Now I'm going to assign roles
+
+my_temp_google_email@cloudshell:~ (qwiklabs-xxx-xy-xxxxxxxxxxx)$ export PROJECT_ID=qwiklabs-xxx-xy-xxxxxxxxxxx
+gcloud projects add-iam-policy-binding $PROJECT_ID \
+    --member=serviceAccount:my-account@$PROJECT_ID.iam.gserviceaccount.com \
+    --role=roles/bigquery.dataOwner
+
+gcloud projects add-iam-policy-binding $PROJECT_ID \
+    --member=serviceAccount:my-account@$PROJECT_ID.iam.gserviceaccount.com \
+    --role=roles/storage.admin
+
+
+my_temp_google_email@cloudshell:~ (qwiklabs-xxx-xy-xxxxxxxxxxx)$ gcloud projects add-iam-policy-binding $DEVSHELL_PROJECT_ID \
+  --member="serviceAccount:my-account@qwiklabs-xxx-xy-xxxxxxxxxxx.iam.gserviceaccount.com" \
+  --role="roles/serviceusage.serviceUsageConsumer"
+
+Let me see the roles I have created:
+
+my_temp_google_email@cloudshell:~ (qwiklabs-xxx-xy-xxxxxxxxxxx)$ gcloud projects get-iam-policy $DEVSHELL_PROJECT_ID
+
+------------------TASK2: Gonna download the creditianl files:--------------------
+
+Generate the Credentials File:
+
+gcloud iam service-accounts keys create ~/my-account-key.json \
+    --iam-account=my-account@$PROJECT.iam.gserviceaccount.com
+
+Set the Environment Variable: Configure the environment to use the credentials file:
+
+export GOOGLE_APPLICATION_CREDENTIALS=~/my-account-key.json
+
+Verify the Setup: Test authentication with:
+
+gcloud auth activate-service-account --key-file=$GOOGLE_APPLICATION_CREDENTIALS
+gcloud auth list
+
+----------------------Task3:----------------------------------------
+Copy the Script: Copy the script from your Cloud Storage bucket:
+
+gsutil cp gs://$PROJECT/analyze-images-v2.py analyze-images-v2.py
+
+Edit the Script: Use a terminal editor like nano or vim:
+
+nano analyze-images-v2.py
+
+then the code can be:
+
+image-analze-v2.py as of now:
+
+import os
+import sys
+
+# Import Google Cloud Library modules
+from google.cloud import storage, vision
+
+if ('GOOGLE_APPLICATION_CREDENTIALS' in os.environ):
+    if (not os.path.exists(os.environ['GOOGLE_APPLICATION_CREDENTIALS'])):
+        print ("The GOOGLE_APPLICATION_CREDENTIALS file does not exist.\n")
+        exit()
+else:
+    print ("The GOOGLE_APPLICATION_CREDENTIALS environment variable is not defined.\n")
+    exit()
+
+if len(sys.argv)<3:
+    print('You must provide parameters for the Google Cloud project ID and Storage bucket')
+    print ('python3 '+sys.argv[0]+ ' [PROJECT_NAME] [BUCKET_NAME]')
+    exit()
+
+project_name = sys.argv[1]
+bucket_name = sys.argv[2]
+
+# Set up our GCS and Vision clients
+storage_client = storage.Client()
+vision_client = vision.ImageAnnotatorClient()
+
+# Get a list of the files in the Cloud Storage Bucket
+files = storage_client.bucket(bucket_name).list_blobs()
+bucket = storage_client.bucket(bucket_name)
+
+print('Processing image files from GCS. This will take a few minutes..')
+
+# Process files from Cloud Storage and save the result to Cloud Storage
+for file in files:
+    if file.name.endswith('jpg') or file.name.endswith('png'):
+        file_content = file.download_as_string()
+
+        # Create a Vision API image object called image_object
+        image_object = vision.Image(content=file_content)
+
+        # Detect text in the image using the Vision API
+        response = vision_client.document_text_detection(image=image_object)
+
+        # Save the text content found by the Vision API into a variable called text_data
+        text_data = response.text_annotations[0].description if response.text_annotations else ""
+
+        # Save the text detection response data in <filename>.txt to Cloud Storage
+        file_name = file.name.split('.')[0] + '.txt'
+        blob = bucket.blob(file_name)
+        # Upload the contents of the text_data string variable to the Cloud Storage file
+        blob.upload_from_string(text_data, content_type='text/plain')
+
+        print(f"Text data extracted and saved to {file_name}")
+
+print('Finished processing images from GCS.')
+
+Run it: Run the script: my_temp_google_email@cloudshell:~ (qwiklabs-xxx-xy-xxxxxxxxxxx)$ python3 analyze-images-v2.py $DEVSHELL_PROJECT_ID $DEVSHELL_PROJECT_ID
+
+
+--------------------------------Moving on to task 4:----------------------------------------------------
+
+image analyze v2.py now:
+
+import os
+import sys
+from google.cloud import storage, bigquery, language, vision_v1, translate_v2
+
+if ('GOOGLE_APPLICATION_CREDENTIALS' in os.environ):
+    if (not os.path.exists(os.environ['GOOGLE_APPLICATION_CREDENTIALS'])):
+        print ("The GOOGLE_APPLICATION_CREDENTIALS file does not exist.\n")
+        exit()
+else:
+    print ("The GOOGLE_APPLICATION_CREDENTIALS environment variable is not defined.\n")
+    exit()
+
+if len(sys.argv) < 3:
+    print('You must provide parameters for the Google Cloud project ID and Storage bucket')
+    print('python3 ' + sys.argv[0] + ' [PROJECT_NAME] [BUCKET_NAME]')
+    exit()
+
+project_name = sys.argv[1]
+bucket_name = sys.argv[2]
+
+# Set up the clients for GCS, BigQuery, Vision, and Translation APIs
+storage_client = storage.Client()
+bq_client = bigquery.Client(project=project_name)
+vision_client = vision_v1.ImageAnnotatorClient()
+translate_client = translate_v2.Client()
+
+# Setup BigQuery dataset and table
+dataset_ref = bq_client.dataset('image_classification_dataset')
+dataset = bigquery.Dataset(dataset_ref)
+table_ref = dataset.table('image_text_detail')
+table = bq_client.get_table(table_ref)
+
+rows_for_bq = []  # List to hold data for BigQuery insertion
+
+# Get a list of files in the Cloud Storage bucket
+files = storage_client.bucket(bucket_name).list_blobs()
+bucket = storage_client.bucket(bucket_name)
+
+print('Processing image files from GCS. This will take a few minutes...')
+
+# Process files from Cloud Storage
+for file in files:
+    if file.name.endswith('jpg') or file.name.endswith('png'):
+        file_content = file.download_as_string()
+
+        # Create an image object for Vision API
+        image = vision_v1.Image(content=file_content)
+
+        # Detect text in the image
+        response = vision_client.text_detection(image=image)
+
+        if len(response.text_annotations) > 0:
+            desc = response.text_annotations[0].description
+            locale = response.text_annotations[0].locale
+
+            # Translate if not in French
+            if locale != 'ja':  # Translate text into French if it's not in French
+                translation = translate_client.translate(desc, target_language='fr')
+                translated_text = translation['translatedText']
+            else:
+                translated_text = desc  # If it's already in French, use the original text
+
+            # Save the result to Cloud Storage as a text file
+            file_name = file.name.split('.')[0] + '.txt'
+            blob = bucket.blob(file_name)
+            blob.upload_from_string(desc, content_type='text/plain')
+
+            # Prepare data for BigQuery
+            rows_for_bq.append((desc, locale, translated_text, file.name))
+
+
+print('Writing Vision API image data to BigQuery...')
+# Insert rows into BigQuery
+errors = bq_client.insert_rows(table, rows_for_bq)
+
+# Ensure no errors occurred during insertion
+assert errors == []
+
+Run it on terminal....
+
+----------------------------------task5:----------------------------------------
+student_03_43526877b971@cloudshell:~ (qwiklabs-gcp-03-6839b2bb9441)$ bq query --use_legacy_sql=false "SELECT locale, COUNT(locale) as lcount FROM image_classification_dataset.image_text_detail GROUP BY locale ORDER BY lcount DESC"
+
+output:
+
++--------+--------+
+| locale | lcount |
++--------+--------+
+| en     |      7 |
+| fr     |      3 |
+| ja     |      3 |
+| und    |      2 |
+| ga     |      2 |
+| el     |      2 |
+| it     |      2 |
+| zh     |      1 |
++--------+--------+
+
+anddddd thats the end of lab.
+
+
